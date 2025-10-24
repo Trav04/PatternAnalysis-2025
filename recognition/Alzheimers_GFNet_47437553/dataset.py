@@ -96,3 +96,66 @@ class BrainScanLoader(Dataset):
             brain_image = self.transform_pipeline(brain_image)
             
         return brain_image, target
+
+
+
+class DatasetSplitter:
+    """
+    Utility class for splitting a dataset into training and validation subsets
+    with reproducible randomization using a seed.
+    """
+    
+    def __init__(self, dataset: Dataset, split_ratio: float = 0.2, seed: int = 42):
+        """
+        Initializes the splitter with a dataset, validation split ratio, and random seed.
+        """
+        self.dataset = dataset
+        self.split_ratio = split_ratio
+        self.seed = seed
+        
+    def perform_split(self) -> Tuple[Subset, Subset]:
+        """
+        Performs the train-validation split by randomly shuffling indices and
+        dividing them according to the split ratio. Returns training and validation subsets.
+        """
+        total_size = len(self.dataset)
+        indices = list(range(total_size))
+        
+        np.random.seed(self.seed)
+        np.random.shuffle(indices)
+        
+        split_point = int(total_size * (1 - self.split_ratio))
+        train_indices = indices[:split_point]
+        val_indices = indices[split_point:]
+        
+        return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
+
+def build_data_pipeline(batch_size: int, mode: str = 'train', 
+                       val_fraction: float = 0.2) -> Dict[str, DataLoader]:
+    """
+    Main function to build PyTorch DataLoader objects for training, validation, or testing.
+    Returns a dictionary containing the appropriate DataLoader(s) based on the mode.
+    """
+    config = BrainImageConfig()
+    loaders = {}
+    
+    if mode == 'train':
+        train_transforms = config.build_train_transforms()
+        full_train_set = BrainScanLoader(config, mode='train', 
+                                         transform_pipeline=train_transforms)
+        
+        splitter = DatasetSplitter(full_train_set, split_ratio=val_fraction)
+        train_subset, val_subset = splitter.perform_split()
+        
+        loaders['train'] = DataLoader(train_subset, batch_size=batch_size, 
+                                     shuffle=True, num_workers=2, pin_memory=True)
+        loaders['val'] = DataLoader(val_subset, batch_size=batch_size, 
+                                   shuffle=False, num_workers=2, pin_memory=True)
+    else:
+        eval_transforms = config.build_eval_transforms()
+        test_set = BrainScanLoader(config, mode='test', 
+                                   transform_pipeline=eval_transforms)
+        loaders['test'] = DataLoader(test_set, batch_size=batch_size, 
+                                    shuffle=False, num_workers=2, pin_memory=True)
+    
+    return loaders
