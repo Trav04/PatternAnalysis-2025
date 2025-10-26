@@ -396,14 +396,14 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # hyperparams (tuned)
     batch_size = 32
-    base_lr = 3e-4
+    base_lr = 2e-4
     num_epochs = 80
     weight_decay = 1e-4
-    label_smoothing = 0.05
-    mixup_alpha = 0.4
+    label_smoothing = 0.00
+    mixup_alpha = 0.0
     cutmix_alpha = 0.0
     gradient_clip = 1.0
-    accumulation_steps = 1
+    accumulation_steps = 2
     ema_decay = 0.999
     print("Loading data...")
     data_loaders = build_data_pipeline(batch_size=batch_size, val_fraction=0.2, augment=True)
@@ -420,7 +420,7 @@ def main():
     criterion = LabelSmoothingCrossEntropy(smoothing=label_smoothing)
     optimizer = optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
     steps_per_epoch = max(1, len(train_loader) // accumulation_steps)
-    scheduler = OneCycleLR(optimizer, max_lr=base_lr*10, epochs=num_epochs, steps_per_epoch=max(1, len(train_loader)//accumulation_steps), pct_start=0.15, div_factor=25, final_div_factor=1000)
+    scheduler = OneCycleLR(optimizer, max_lr=1e-3, epochs=num_epochs, steps_per_epoch=max(1, len(train_loader)//accumulation_steps), pct_start=0.2, div_factor=10, final_div_factor=100)
     use_amp = torch.cuda.is_available()
     scaler = amp.GradScaler(enabled=use_amp)
     mixup = MixUp(alpha=mixup_alpha)
