@@ -32,6 +32,7 @@ from datetime import timedelta
 import random
 import torch.nn.functional as F
 from torch import amp
+import matplotlib.pyplot as plt
 
 # Import enhanced modules
 from modules import (
@@ -396,7 +397,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # hyperparams (tuned)
     batch_size = 32
-    base_lr = 2e-4
+    base_lr = 3e-4
     num_epochs = 80
     weight_decay = 1e-4
     label_smoothing = 0.00
@@ -420,7 +421,7 @@ def main():
     criterion = LabelSmoothingCrossEntropy(smoothing=label_smoothing)
     optimizer = optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
     steps_per_epoch = max(1, len(train_loader) // accumulation_steps)
-    scheduler = OneCycleLR(optimizer, max_lr=1e-3, epochs=num_epochs, steps_per_epoch=max(1, len(train_loader)//accumulation_steps), pct_start=0.2, div_factor=10, final_div_factor=100)
+    scheduler = OneCycleLR(optimizer, max_lr=3e-3, epochs=num_epochs, steps_per_epoch=max(1, len(train_loader)//accumulation_steps), pct_start=0.15, div_factor=10, final_div_factor=100)
     use_amp = torch.cuda.is_available()
     scaler = amp.GradScaler(enabled=use_amp)
     mixup = MixUp(alpha=mixup_alpha)
@@ -492,6 +493,33 @@ def main():
         import traceback
         traceback.print_exc()
     print("Training complete. Best val acc:", best_val_acc)
+    
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    
+    # Plot Loss vs Epochs
+    epochs_range = range(1, len(train_losses) + 1)
+    ax1.plot(epochs_range, train_losses, 'b-', label='Train Loss')
+    ax1.plot(epochs_range, val_losses, 'orange', label='Validation Loss')
+    ax1.set_xlabel('Epochs')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Loss vs Epochs')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot Accuracy vs Epochs
+    ax2.plot(epochs_range, train_accuracies, 'b-', label='Train Accuracy')
+    ax2.plot(epochs_range, val_accuracies, 'orange', label='Validation Accuracy')
+    ax2.set_xlabel('Epochs')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Accuracy vs Epochs')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('training_plots.png', dpi=300, bbox_inches='tight')
+    print("Training plots saved as 'training_plots.png'")
+    plt.show()
 
 
 if __name__ == '__main__':
