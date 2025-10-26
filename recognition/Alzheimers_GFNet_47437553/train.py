@@ -364,7 +364,7 @@ def validate_with_tta(model, val_loader, criterion, device, tta_transforms=None)
             batch_logits = []
             for transform in tta_transforms:
                 aug_images = transform(images)
-                with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+                with amp.autocast('cuda', enabled=torch.cuda.is_available()):
                     outputs = model(aug_images)  # logits
                     batch_logits.append(outputs)
             # Average logits (correct way to ensemble before softmax)
