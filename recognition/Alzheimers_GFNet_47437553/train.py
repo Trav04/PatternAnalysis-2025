@@ -479,14 +479,7 @@ def main():
                 best_val_acc = val_acc
                 patience_counter = 0
                 torch.save(model.state_dict(), 'enhanced_gfnet_best_model.pth')
-            else:
-                patience_counter += 1
-            if val_acc >= 80.0 or ema_acc >= 80.0:
-                print("Target achieved. Stopping.")
-                break
-            if patience_counter >= patience:
-                print("Early stopping: no improvement")
-                break
+
     except KeyboardInterrupt:
         print("Interrupted")
     except Exception as e:
