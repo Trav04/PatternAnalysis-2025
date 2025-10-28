@@ -33,19 +33,7 @@ Each GFNet block performs the following operations:
 - Applies inverse FFT to return to spatial domain
 - Feeds through MLP for channel mixing with residual connections
 
-
-## Results Discussion
-
-The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 2) show:
-
-- **Convergence**: Both training and validation losses decrease steadily over 50 epochs
-- **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
-- **Stability**: Low variance in validation metrics suggests robust learning
-
-![Training Progress](imgs/TrainingGraphs.png)
-*Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
-
-## Dependencies
+## Reproducability & Dependencies
 
 ### Dependency Versions
 
@@ -103,6 +91,17 @@ The preprocessed dataset can be found on the `rangpur` cluster provided to stude
     └── AD/
 ```
 
+## Results Discussion ( SECTION IN PROGRESS )
+
+The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 2) show:
+
+- **Convergence**: Both training and validation losses decrease steadily over 50 epochs
+- **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
+- **Stability**: Low variance in validation metrics suggests robust learning
+
+![Training Progress](imgs/TrainingGraphs.png)
+*Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
+
 ### Preprocessing Pipeline
 
 Looking at the dataset.py code for the ADNI Alzheimer's classification project, here's a brief description of the preprocessing used:
@@ -148,9 +147,39 @@ The data is split following standard practices in medical imaging:
 - **Validation Set**: 15% for hyperparameter tuning and early stopping
 - **Test Set**: 15% held out for final evaluation
 
-**Split Justification**: The 70/15/15 split provides sufficient training examples while maintaining adequate validation and test sets for reliable performance estimation. Data is stratified by class to ensure balanced representation across splits. Patient-level splitting ensures no data leakage (scans from the same patient appear only in one split).
+**Split Rationale**: The 70/15/15 split provides sufficient training examples while maintaining adequate validation and test sets for reliable performance estimation. Data is stratified by class to ensure balanced representation across splits. Patient-level splitting ensures no data leakage (scans from the same patient appear only in one split).
 
-## Usage
+## Training Methodology
+
+**Data Split & Optimizer:**
+- 80/20 train-validation split balances training data volume with reliable validation metrics
+- AdamW optimizer (lr=3e-4, weight_decay=1e-4) with OneCycleLR scheduler (max_lr=3e-3)
+- OneCycleLR enables aggressive learning rate exploration with cosine annealing for stability
+
+**Training Optimizations:**
+- **Gradient accumulation** (2 steps) simulates larger batch sizes on limited GPU memory
+- **Gradient clipping** (norm=1.0) prevents exploding gradients in deep networks
+- **Mixed-precision training (AMP)** accelerates computation without sacrificing stability
+- **Exponential Moving Average (EMA, decay=0.999)** smooths parameter updates for robust generalization
+
+**Regularization Techniques:**
+- Label smoothing (ε=0.05) prevents overconfident predictions on medical imaging data
+- Optional MixUp/CutMix augmentation addresses limited sample sizes and inter-rater variability
+
+## Validation Methodology
+
+**Evaluation Strategy:**
+- **Test-Time Augmentation (TTA)** averages predictions across horizontal flips for reduced variance
+- Both standard and EMA-averaged weights evaluated (EMA typically shows superior generalization)
+- Consistent loss function (label-smoothed cross-entropy) between training and validation
+
+**Architecture Design for AD Detection:**
+- **Fourier-domain global filtering** captures long-range spatial dependencies across brain regions
+- **Channel attention modules** emphasize discriminative anatomical features
+- **Multi-scale feature fusion** combines local details (hippocampal atrophy) with global patterns (ventricular enlargement, cortical thinning)
+- **Layer scaling** ensures training stability in deep architectures
+
+## Example Usage
 
 ### Project Structure
 
@@ -167,40 +196,14 @@ alzheimer_classification/
 ### Training the Model
 
 ```bash
-python train.py --data_path /home/groups/comp3710/ADNI \
-                --model_variant base \
-                --batch_size 32 \
-                --epochs 50 \
-                --learning_rate 1e-4 \
-                --img_size 224
+python train.py
 ```
 
-**Key Training Parameters:**
-- `--model_variant`: Choose from `small`, `base`, or `large` (default: `base`)
-- `--batch_size`: Batch size for training (default: 32)
-- `--epochs`: Number of training epochs (default: 50)
-- `--learning_rate`: Initial learning rate (default: 1e-4)
-- `--img_size`: Input image resolution (default: 224)
+Or alternatively, if using the `rangpur` cluster
 
-**Training Strategy:**
-- Optimizer: AdamW with weight decay 0.05
-- Learning Rate Schedule: Cosine annealing with warmup
-- Loss Function: Cross-Entropy Loss
-- Early Stopping: Patience of 10 epochs based on validation loss
-
-### Making Predictions
-
-## Example Inputs and Outputs
-
-### Input Format
-
-### Example Input
-
-### Example Output
-
-### Visualization Output
-
-### Performance Metrics on Test Set
+```bash
+sbatch slurm.txt
+```
 
 ## Model Variants
 
@@ -212,53 +215,9 @@ Three GFNet variants are available with different capacity:
 | Base    | 768       | 12    | ~90M   | ~8GB         |
 | Large   | 1024      | 18    | ~220M  | ~12GB        |
 
-**Recommendation**: Start with `base` for optimal balance between accuracy and computational cost.
-
-## File Descriptions
-
-### modules.py
-
-Contains the GFNet architecture implementation with the following components:
-
-- `Mlp`: Multi-layer perceptron with GELU activation
-- `GlobalFilter`: Fourier-based spatial mixing layer (core innovation)
-- `Block`: GFNet transformer block combining GlobalFilter and MLP
-- `PatchEmbed`: Converts images to patch embeddings
-- `GFNet`: Main model class for classification
-- Model variants: `gfnet_small()`, `gfnet_base()`, `gfnet_large()`
-
-### dataset.py
-
-Handles data loading and preprocessing:
-
-- `ADNIDataset`: PyTorch Dataset class for ADNI brain scans
-- NIfTI file loading utilities
-- Preprocessing pipeline (normalization, augmentation)
-- Train/val/test data loaders with stratification
-
-### train.py
-
-Complete training pipeline:
-
-- Model initialization and configuration
-- Training loop with validation
-- Loss and metric computation
-- Checkpoint saving (best model selection)
-- Learning rate scheduling
-- Plotting training curves
-
-### predict.py
-
-Inference script for new samples:
-
-- Model loading from checkpoint
-- Single sample or batch prediction
-- Visualization of results
-- Export predictions to CSV
-
+The `base` model is used by default and was used to produce the results in this document, it provided an optimal balance between accuracy and computational cost.
 
 ## Limitations and Future Work
-
 **Future Improvements**:
 - Implement multi-class classification (CN/MCI/AD)
 - Add explainability methods (Grad-CAM, attention maps) for clinical interpretability
