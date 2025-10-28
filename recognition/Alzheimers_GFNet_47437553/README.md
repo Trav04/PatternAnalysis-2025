@@ -190,20 +190,9 @@ python train.py --data_path /home/groups/comp3710/ADNI \
 
 ### Making Predictions
 
-```bash
-python predict.py --model_path best_model.pth \
-                  --input_path /path/to/brain_scan.nii.gz \
-                  --output_dir predictions/
-```
-
 ## Example Inputs and Outputs
 
 ### Input Format
-
-- **File Type**: NIfTI format (.nii or .nii.gz)
-- **Image Dimensions**: 224 × 224 pixels (single 2D slice or preprocessed 3D volume)
-- **Channels**: 1 (grayscale)
-- **Intensity Range**: Normalized MRI intensity values
 
 ### Example Input
 
