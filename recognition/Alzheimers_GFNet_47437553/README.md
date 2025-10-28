@@ -13,6 +13,7 @@ Alzheimer's disease is a progressive neurodegenerative disorder that affects mem
 GFNet replaces the self-attention mechanism with Fourier-based global filtering. The architecture processes brain MRI scans through the following pipeline visualised by a digram from Rao et al. (2023).
 
 ![GFNetDiagram](imgs/GFNetDiagram.png)
+*Figure 1 GFNet architecture overview and component breakdown (Rao et al. 2023)*
 
 1. **Patch Embedding**: Divides input image into non-overlapping patches (16×16)
 2. **Global Filter Layer**: 
@@ -32,23 +33,33 @@ Each GFNet block performs the following operations:
 - Applies inverse FFT to return to spatial domain
 - Feeds through MLP for channel mixing with residual connections
 
+
+## Results Discussion
+
+The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 2) show:
+
+- **Convergence**: Both training and validation losses decrease steadily over 50 epochs
+- **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
+- **Stability**: Low variance in validation metrics suggests robust learning
+
 ![Training Progress](imgs/TrainingGraphs.png)
-*Figure: Training and validation loss/accuracy curves showing model convergence over 50 epochs*
+*Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
 
 ## Dependencies
 
-### Core Requirements
+### Dependency Versions
+
+The following specific versions are required for the accurate reporducability of results.
 
 ```
-Python >= 3.8
-PyTorch >= 1.12.0
-torchvision >= 0.13.0
-timm >= 0.6.12
-nibabel >= 4.0.0
-numpy >= 1.21.0
-scikit-learn >= 1.0.0
-matplotlib >= 3.5.0
-tqdm >= 4.62.0
+timm >= 1.0.20
+matplotlib >= 3.10.7
+tqdm >= 4.67.1
+numpy >= 2.3.4
+pillow >= 12.0.0
+torch >= 2.9.0
+torchvision >= 0.24.0
+scikit-learn >= 1.7.2
 ```
 
 ### Installation
@@ -60,28 +71,13 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-pip install timm nibabel numpy scikit-learn matplotlib tqdm
+pip install timm numpy scikit-learn matplotlib tqdm torch torchvision
 ```
 
 ### Hardware Requirements
 
 - **GPU**: NVIDIA GPU with at least 8GB VRAM (e.g., RTX 3070, V100)
 - **RAM**: Minimum 16GB system memory
-
-### Dependency Versions Used
-
-The following specific versions were used in development and testing:
-
-```
-timm==1.0.20
-matplotlib==3.10.7
-tqdm==4.67.1
-numpy==2.3.4
-pillow==12.0.0
-torch==2.9.0
-torchvision==0.24.0
-scikit-learn==1.7.2
-```
 
 ## Dataset
 
@@ -90,6 +86,8 @@ scikit-learn==1.7.2
 The Alzheimer's Disease Neuroimaging Initiative (ADNI) dataset contains preprocessed brain MRI scans with two classes:
 - **CN (Cognitive Normal)**: Healthy control subjects
 - **AD (Alzheimer's Disease)**: Patients diagnosed with AD
+
+The preprocessed dataset can be found on the `rangpur` cluster provided to students of The University of Queensland.
 
 **Dataset Structure:**
 ```
@@ -107,21 +105,40 @@ The Alzheimer's Disease Neuroimaging Initiative (ADNI) dataset contains preproce
 
 ### Preprocessing Pipeline
 
-The preprocessing steps applied to the raw MRI data include:
+Looking at the dataset.py code for the ADNI Alzheimer's classification project, here's a brief description of the preprocessing used:
 
-1. **Skull Stripping**: Removal of non-brain tissue to focus on brain structures
-2. **Registration**: Spatial normalization to MNI152 template space for anatomical consistency
-3. **Intensity Normalization**: Z-score normalization per scan: `(x - μ) / σ`
-4. **Resampling**: Standardized to 224×224 pixel resolution
-5. **Format**: Stored as NIfTI (.nii/.nii.gz) files with single-channel grayscale
+## Data Preprocessing
 
-**Data Augmentation** (applied during training only):
-- Random horizontal flips (p=0.5)
-- Random rotation (±10 degrees)
-- Random affine transformations
-- Intensity jittering
+### Image Loading and Structure
+- **Input Format**: JPEG brain scan images organized in class-specific directories (NC for Cognitively Normal, AD for Alzheimer's Disease)
+- **Dataset Split**: Separate train and test directories with stratified validation split (20% of training data by default)
+- **Color Conversion**: All images converted to RGB format for consistency
 
-These augmentations help the model generalize better by simulating natural variations in brain anatomy and scan positioning.
+### Image Transformations
+
+**Training Set Augmentation:**
+- **Spatial Augmentations**:
+  - Random resized crop to 224×224 pixels (scale: 0.75-1.0, aspect ratio: 0.9-1.1)
+  - Random horizontal flip (50% probability)
+  - Random rotation (±10 degrees)
+- **Intensity Augmentations**:
+  - Color jitter applied with 50% probability (brightness: ±15%, contrast: ±15%, saturation: ±10%, hue: ±3%)
+  - Random erasing (25% probability, scale: 2-15% of image area)
+- **Normalization**: ImageNet statistics (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+**Validation/Test Set:**
+- Simple resize to 224×224 pixels
+- ImageNet normalization (no augmentation to ensure consistent evaluation)
+
+### Class Balancing
+- **Weighted Random Sampler**: Implements class balancing during training by computing inverse class frequency weights
+- Ensures equal representation of both classes (NC and AD) in each training epoch despite potential class imbalance
+- Sample weights calculated as: `weight = 1.0 / class_count`
+
+### Data Pipeline Features
+- **Stratified Split**: Validation split maintains original class distribution using scikit-learn's train_test_split
+- **Efficient Loading**: PyTorch DataLoader with configurable batch size, multi-worker support, and pin_memory for GPU optimization
+- **Label Format**: Binary classification with long tensor labels (0=NC, 1=AD)
 
 ### Dataset Splits
 
@@ -190,10 +207,7 @@ python predict.py --model_path best_model.pth \
 
 ### Example Input
 
-
-
 ### Example Output
-
 
 ### Visualization Output
 
@@ -253,22 +267,8 @@ Inference script for new samples:
 - Visualization of results
 - Export predictions to CSV
 
-## Results Discussion
-
-The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 1) show:
-
-- **Convergence**: Both training and validation losses decrease steadily over 50 epochs
-- **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
-- **Stability**: Low variance in validation metrics suggests robust learning
-
-**Key Observations**:
 
 ## Limitations and Future Work
-
-**Current Limitations**:
-- Binary classification only (CN vs AD); does not include MCI (Mild Cognitive Impairment)
-- 2D slice-based analysis; 3D volumetric approach could capture more spatial information
-- Limited to T1-weighted MRI; multimodal imaging (PET, DTI) could improve accuracy
 
 **Future Improvements**:
 - Implement multi-class classification (CN/MCI/AD)
