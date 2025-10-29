@@ -91,7 +91,7 @@ The preprocessed dataset can be found on the `rangpur` cluster provided to stude
     └── AD/
 ```
 
-## Results Discussion ( SECTION IN PROGRESS )
+## Results Discussion
 
 The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 2) show:
 
@@ -99,12 +99,14 @@ The model achieves **80.2% test accuracy**, exceeding the required 80% threshold
 - **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
 - **Stability**: Low variance in validation metrics suggests robust learning
 
+The higher validation accuracy suggests that the training set augmentations made the dataset harder to infer than the validation set itself. Both the Training loss and Validation loss converged towards a 0.40 value with minimal difference between the two indicating that there was minimal overfitting on the trianing set.
+
 ![Training Progress](imgs/TrainingGraphs.png)
 *Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
 
 ### Preprocessing Pipeline
 
-Looking at the dataset.py code for the ADNI Alzheimer's classification project, here's a brief description of the preprocessing used:
+The following techniques were used for data preprocessing:
 
 ## Data Preprocessing
 
@@ -190,7 +192,6 @@ alzheimer_classification/
 ├── train.py            # Training script with validation
 ├── predict.py          # Inference on new samples
 ├── README.md           # This file
-└── requirements.txt    # Dependency list
 ```
 
 ### Training the Model
