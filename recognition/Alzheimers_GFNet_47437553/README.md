@@ -104,6 +104,10 @@ The higher validation accuracy suggests that the training set augmentations made
 ![Training Progress](imgs/TrainingGraphs.png)
 *Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
 
+## Prediction Results
+
+[ Insert prediction results here ]
+
 ### Preprocessing Pipeline
 
 The following techniques were used for data preprocessing:

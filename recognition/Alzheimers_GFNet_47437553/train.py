@@ -34,7 +34,6 @@ import torch.nn.functional as F
 from torch import amp
 import matplotlib.pyplot as plt
 
-# Import enhanced modules
 from modules import (
     create_enhanced_gfnet_small, 
     create_enhanced_gfnet_base,
@@ -44,14 +43,15 @@ from dataset import build_data_pipeline
 
 
 class LabelSmoothingCrossEntropy(nn.Module):
-    """Label smoothing loss for better generalization"""
+    """Cross-entropy loss with label smoothing to prevent overconfident predictions.
+    Encourages the model to be less certain, improving generalization."""
+    
     def __init__(self, smoothing=0.05):
         super().__init__()
         self.smoothing = smoothing
         self.confidence = 1.0 - smoothing
         
     def forward(self, pred, target):
-        # pred expected to be raw logits
         pred = pred.log_softmax(dim=-1)
         with torch.no_grad():
             true_dist = torch.zeros_like(pred)
@@ -61,41 +61,64 @@ class LabelSmoothingCrossEntropy(nn.Module):
 
 
 class MixUp:
+    """MixUp data augmentation that linearly interpolates between training examples.
+    Creates synthetic samples by blending images and labels."""
+    
     def __init__(self, alpha=0.2):
         self.alpha = alpha
+    
     def __call__(self, images, labels, model, criterion):
         if self.alpha <= 0:
             return None
+        
         lam = np.random.beta(self.alpha, self.alpha)
         batch_size = images.size(0)
         index = torch.randperm(batch_size).to(images.device)
+        
+        # Blend images
         mixed_images = lam * images + (1 - lam) * images[index]
         outputs = model(mixed_images)
+        
+        # Blend losses
         loss = lam * criterion(outputs, labels) + (1 - lam) * criterion(outputs, labels[index])
         return outputs, loss, labels, index, lam
 
 
 class CutMix:
+    """CutMix augmentation that replaces rectangular regions with patches from other images.
+    More aggressive than MixUp, disabled by default (alpha=0.0)."""
+    
     def __init__(self, alpha=0.0):
         self.alpha = alpha
+    
     def __call__(self, images, labels, model, criterion):
-        # Default disabled by alpha=0.0
         if self.alpha <= 0:
             return None
+        
         batch_size, _, h, w = images.shape
         lam = np.random.beta(self.alpha, self.alpha)
+        
+        # Determine cut region size
         cut_ratio = np.sqrt(1.0 - lam)
         cut_w = int(w * cut_ratio)
         cut_h = int(h * cut_ratio)
+        
+        # Random center point
         cx = np.random.randint(w)
         cy = np.random.randint(h)
+        
+        # Bounding box coordinates
         bbx1 = np.clip(cx - cut_w // 2, 0, w)
         bby1 = np.clip(cy - cut_h // 2, 0, h)
         bbx2 = np.clip(cx + cut_w // 2, 0, w)
         bby2 = np.clip(cy + cut_h // 2, 0, h)
+        
+        # Mix images by replacing region
         index = torch.randperm(batch_size).to(images.device)
         mixed_images = images.clone()
         mixed_images[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
+        
+        # Adjust lambda based on actual cut area
         lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (w * h))
         outputs = model(mixed_images)
         loss = lam * criterion(outputs, labels) + (1 - lam) * criterion(outputs, labels[index])
@@ -103,41 +126,53 @@ class CutMix:
 
 
 class EMA:
+    """Exponential Moving Average of model parameters for more stable predictions.
+    Maintains shadow weights that smooth out training fluctuations."""
+    
     def __init__(self, model, decay=0.999):
         self.model = model
         self.decay = decay
         self.shadow = {}
         self.register()
+    
     def register(self):
+        """Initialize shadow parameters with current model weights."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 self.shadow[name] = param.data.clone()
+    
     def update(self):
+        """Update shadow parameters with exponential moving average."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
                 self.shadow[name] = new_average.clone()
+    
     def apply_shadow(self):
+        """Temporarily replace model weights with shadow weights for evaluation."""
         backup = {}
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 backup[name] = param.data.clone()
                 param.data = self.shadow[name]
         return backup
+    
     def restore(self, backup):
+        """Restore original model weights after shadow evaluation."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 param.data = backup[name]
 
 
 def _sanity_checks(train_loader, val_loader):
-    # Print label distribution and a simple check
+    """Quick sanity check to verify label distribution in a sample batch.
+    Helps catch data loading issues early in training."""
     import collections
     all_train_labels = []
     for _, labels in train_loader:
         all_train_labels.append(labels.cpu().numpy())
         break
-    # we only sample one batch for speed
+    
     if len(all_train_labels) > 0:
         uniq, counts = np.unique(np.concatenate(all_train_labels), return_counts=True)
         print("Sanity check (sample batch labels):", dict(zip(uniq.tolist(), counts.tolist())))
@@ -147,16 +182,12 @@ def _overfit_small_batch_diagnostic(model, dataset_fn, device,
                                     batch_size=8, steps=800,
                                     lr=1e-2, weight_decay=0.0,
                                     use_label_smoothing=False):
-    """
-    Deterministic overfit diagnostic:
-    - Use model.eval() during this test to disable dropout/freq-dropout and ensure determinism.
-    - Use explicit dls['train'] extraction.
-    - Simple CrossEntropyLoss for diagnostics (no smoothing) unless requested.
-    """
-    # Build deterministic loaders (no augmentation)
+    """Diagnostic test to verify model can overfit a small batch.
+    Ensures model architecture and gradients are functioning correctly before full training."""
+    
+    # Build deterministic loaders without augmentation
     dls = dataset_fn(batch_size=batch_size, val_fraction=0.2, augment=False)
     if 'train' not in dls:
-        # fallback if user returned values() style
         train_loader = list(dls.values())[0]
     else:
         train_loader = dls['train']
@@ -168,35 +199,31 @@ def _overfit_small_batch_diagnostic(model, dataset_fn, device,
     print("Overfit diagnostic - batch label distribution:", dict(zip(uniq.cpu().tolist(), counts.cpu().tolist())))
     print(f"Image stats - min {images.min().item():.4f}, max {images.max().item():.4f}, mean {images.mean().item():.4f}, std {images.std().item():.4f}")
 
-    # Simple optimizer + loss for the diagnostic
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     if use_label_smoothing:
         criterion = LabelSmoothingCrossEntropy(smoothing=0.05)
     else:
         criterion = nn.CrossEntropyLoss()
 
-    # Save original training/eval state and set deterministic eval for forward passes
+    # Use eval mode for deterministic forward (disables dropout)
     orig_training = model.training
-    model.eval()   # disable dropout / freq_dropout for deterministic forward
-
-    # Ensure gradients are enabled (eval() doesn't stop gradients)
+    model.eval()
     torch.set_grad_enabled(True)
 
     success = False
     for i in range(1, steps + 1):
         opt.zero_grad()
-        outputs = model(images)  # logits (deterministic because model.eval())
+        outputs = model(images)
         loss = criterion(outputs, labels)
         loss.backward()
 
-        # grad norm check
+        # Monitor gradient norms for debugging
         total_grad_norm_sq = 0.0
         grad_examples = []
         for name, p in model.named_parameters():
             if p.grad is not None:
                 gnorm = p.grad.data.norm(2).item()
                 total_grad_norm_sq += gnorm ** 2
-                # record a couple of grads for diagnostics
                 if len(grad_examples) < 3:
                     grad_examples.append((name, gnorm))
         total_grad_norm = total_grad_norm_sq ** 0.5
@@ -228,36 +255,41 @@ def _overfit_small_batch_diagnostic(model, dataset_fn, device,
     return success
 
 
-
-
 def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer, 
                             scheduler, train_losses, train_accuracies, device,
                             mixup, cutmix, scaler, ema, use_amp=True, 
                             gradient_clip=1.0, accumulation_steps=2):
+    """Train model for one epoch with gradient accumulation, mixed precision, and data augmentation.
+    Includes MixUp/CutMix augmentation and EMA weight updates."""
+    
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
+    
     print(f"\n{'='*70}")
     print(f"Epoch {epoch + 1} - Enhanced Training Phase")
     print(f"{'='*70}")
+    
     batch_count = len(train_loader)
     epoch_start = time.time()
     optimizer.zero_grad()
     updates = 0
+    
     for batch_idx, (images, labels) in enumerate(train_loader):
         batch_start = time.time()
         images = images.to(device)
         labels = labels.to(device)
+        
+        # Random selection of augmentation strategy
         use_mix = (mixup is not None) and (random.random() < 0.5)
         use_cut = (cutmix is not None) and (random.random() < 0.2)
 
-        # inside train loop
         with amp.autocast('cuda', enabled=use_amp):
+            # Apply CutMix after warmup period
             if use_cut and (epoch > 5) and (cutmix is not None):
                 out = cutmix(images, labels, model, criterion)
                 if out is None:
-                    # fallback to normal forward (only call once)
                     outputs = model(images)
                     loss = criterion(outputs, labels)
                     orig_labels = labels
@@ -266,6 +298,7 @@ def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
                 else:
                     outputs, loss, orig_labels, index, lam = out
 
+            # Apply MixUp after warmup period
             elif use_mix and (epoch > 3) and (mixup is not None):
                 out = mixup(images, labels, model, criterion)
                 if out is None:
@@ -278,20 +311,21 @@ def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
                     outputs, loss, orig_labels, index, lam = out
 
             else:
-                # standard forward
+                # Standard forward pass
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 orig_labels = labels
                 index = None
                 lam = 1.0
 
-        # Scale for accumulation
+        # Scale loss for gradient accumulation
         loss = loss / accumulation_steps
         if use_amp:
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        # optimizer step when accumulation reached
+        
+        # Perform optimizer step when accumulation threshold reached
         if (batch_idx + 1) % accumulation_steps == 0:
             if use_amp:
                 scaler.unscale_(optimizer)
@@ -303,26 +337,34 @@ def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
                 optimizer.step()
             optimizer.zero_grad()
             updates += 1
-            # Step scheduler AFTER optimizer.step (required for OneCycleLR)
+            
+            # Step scheduler after optimizer update (required for OneCycleLR)
             if scheduler is not None:
                 scheduler.step()
-            # Update EMA
+            
             ema.update()
-        # statistics (use logits -> predictions)
+        
+        # Track training statistics
         running_loss += loss.item() * accumulation_steps
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
+        
+        # Adjust accuracy calculation for mixed samples
         if lam == 1.0:
             correct += (predicted == orig_labels).sum().item()
         else:
             correct += lam * (predicted == orig_labels).sum().item()
+        
         batch_time = time.time() - batch_start
         current_acc = 100.0 * correct / total
         current_lr = scheduler.get_last_lr()[0] if scheduler is not None else 0.0
+        
+        # Periodic logging
         if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == batch_count:
             print(f"  Batch [{batch_idx + 1:4d}/{batch_count:4d}] | Loss: {loss.item() * accumulation_steps:.4f} | "
                   f"Acc: {current_acc:.2f}% | LR: {current_lr:.6f} | Time: {batch_time:.2f}s")
-    # final step if needed
+    
+    # Final step if batches don't divide evenly by accumulation_steps
     if batch_count % accumulation_steps != 0:
         if use_amp:
             scaler.unscale_(optimizer)
@@ -336,10 +378,12 @@ def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
         if scheduler is not None:
             scheduler.step()
         ema.update()
+    
     epoch_loss = running_loss / batch_count
     epoch_acc = 100.0 * correct / total if total > 0 else 0.0
     train_losses.append(epoch_loss)
     train_accuracies.append(epoch_acc)
+    
     epoch_time = time.time() - epoch_start
     print(f"\n{'─'*70}")
     print(f"Training Summary:")
@@ -347,34 +391,45 @@ def train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
     print(f"  Accuracy: {epoch_acc:.2f}%")
     print(f"  Epoch Time: {timedelta(seconds=int(epoch_time))}")
     print(f"{'─'*70}")
+    
     return epoch_loss, epoch_acc
 
 
 def validate_with_tta(model, val_loader, criterion, device, tta_transforms=None):
+    """Validate model with Test-Time Augmentation for improved robustness.
+    Averages predictions across multiple augmentations of each image."""
+    
     model.eval()
     if tta_transforms is None:
+        # Default: original and horizontal flip
         tta_transforms = [lambda x: x, lambda x: torch.flip(x, dims=[3])]
+    
     all_preds = []
     all_labels = []
     running_loss = 0.0
+    
     with torch.no_grad():
         for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device)
-            # Collect logits per augmentation
+            
+            # Collect logits from each augmentation
             batch_logits = []
             for transform in tta_transforms:
                 aug_images = transform(images)
                 with amp.autocast('cuda', enabled=torch.cuda.is_available()):
-                    outputs = model(aug_images)  # logits
+                    outputs = model(aug_images)
                     batch_logits.append(outputs)
-            # Average logits (correct way to ensemble before softmax)
+            
+            # Average logits before applying softmax (proper ensembling)
             avg_logits = torch.stack(batch_logits).mean(dim=0)
             loss = criterion(avg_logits, labels)
             running_loss += loss.item()
+            
             probs = F.softmax(avg_logits, dim=1)
             all_preds.append(probs.cpu())
             all_labels.append(labels.cpu())
+    
     all_preds = torch.cat(all_preds, dim=0)
     all_labels = torch.cat(all_labels, dim=0)
     _, predicted = torch.max(all_preds, 1)
@@ -382,11 +437,17 @@ def validate_with_tta(model, val_loader, criterion, device, tta_transforms=None)
     total = all_labels.size(0)
     accuracy = 100.0 * correct / total if total > 0 else 0.0
     avg_loss = running_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
+    
     return avg_loss, accuracy, predicted, all_labels
 
 
 def main():
+    """Main training function that orchestrates the complete training pipeline.
+    Includes data loading, model initialization, training loop, and result visualization."""
+    
     print("Starting enhanced training (improved) ...")
+    
+    # Set random seeds for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
     random.seed(42)
@@ -394,8 +455,10 @@ def main():
         torch.cuda.manual_seed_all(42)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # hyperparams (tuned)
+    
+    # Hyperparameters (tuned for stability and performance)
     batch_size = 32
     base_lr = 3e-4
     num_epochs = 80
@@ -406,33 +469,40 @@ def main():
     gradient_clip = 1.0
     accumulation_steps = 2
     ema_decay = 0.999
+    
     print("Loading data...")
     data_loaders = build_data_pipeline(batch_size=batch_size, val_fraction=0.2, augment=True)
     train_loader = data_loaders['train']
     val_loader = data_loaders['val']
     print(f"Train dataset size (subset len): {len(train_loader.dataset)}")
     print(f"Val dataset size (subset len): {len(val_loader.dataset)}")
-    # sanity
+    
     _sanity_checks(train_loader, val_loader)
+    
     print("Initializing model...")
     model = create_enhanced_gfnet_base(num_classes=2, img_size=224, in_chans=3)
     model = model.to(device)
+    
     ema = EMA(model, decay=ema_decay)
     criterion = LabelSmoothingCrossEntropy(smoothing=label_smoothing)
     optimizer = optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
+    
     steps_per_epoch = max(1, len(train_loader) // accumulation_steps)
-    scheduler = OneCycleLR(optimizer, max_lr=3e-3, epochs=num_epochs, steps_per_epoch=max(1, len(train_loader)//accumulation_steps), pct_start=0.15, div_factor=10, final_div_factor=100)
+    scheduler = OneCycleLR(optimizer, max_lr=3e-3, epochs=num_epochs, 
+                          steps_per_epoch=max(1, len(train_loader)//accumulation_steps), 
+                          pct_start=0.15, div_factor=10, final_div_factor=100)
+    
     use_amp = torch.cuda.is_available()
     scaler = amp.GradScaler(enabled=use_amp)
     mixup = MixUp(alpha=mixup_alpha)
     cutmix = CutMix(alpha=cutmix_alpha)
-    # quick overfit check (only first epoch)
-    # Check param requires_grad
+    
+    # Display model information
     num_params = sum(p.numel() for p in model.parameters())
     num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model params: {num_params:,}, trainable: {num_trainable:,}")
 
-    # Confirm labels dtype and unique classes in whole dataset (fast sample)
+    # Sample label distribution check
     sample_labels = []
     for _, lbl in train_loader:
         sample_labels.append(lbl.cpu().numpy())
@@ -443,17 +513,18 @@ def main():
     print("Running quick overfit test on a single batch to ensure model can learn...")
     overfit_ok = _overfit_small_batch_diagnostic(
         model,
-        dataset_fn=build_data_pipeline,   # NOTE: function, not pre-made loader
+        dataset_fn=build_data_pipeline,
         device=device,
         batch_size=8,
         steps=400,
         lr=5e-3,
         weight_decay=0.0,
-        use_label_smoothing=False  # disable smoothing for overfit test
+        use_label_smoothing=False
     )
     if not overfit_ok:
         print("Warning: model failed to overfit small batch. Inspect data, loss, model and try again.")
-    # training loop
+    
+    # Training loop with metrics tracking
     train_losses = []
     val_losses = []
     train_accuracies = []
@@ -461,20 +532,29 @@ def main():
     best_val_acc = 0.0
     patience = 20
     patience_counter = 0
+    
     try:
         for epoch in range(num_epochs):
-            train_loss, train_acc = train_one_epoch_enhanced(epoch, model, train_loader, criterion, optimizer,
-                                                             scheduler, train_losses, train_accuracies,
-                                                             device, mixup, cutmix, scaler, ema,
-                                                             use_amp, gradient_clip, accumulation_steps)
+            train_loss, train_acc = train_one_epoch_enhanced(
+                epoch, model, train_loader, criterion, optimizer,
+                scheduler, train_losses, train_accuracies,
+                device, mixup, cutmix, scaler, ema,
+                use_amp, gradient_clip, accumulation_steps
+            )
+            
+            # Validation with standard weights
             val_loss, val_acc, _, _ = validate_with_tta(model, val_loader, criterion, device)
             val_losses.append(val_loss)
             val_accuracies.append(val_acc)
-            # EMA validation
+            
+            # Validation with EMA weights
             backup = ema.apply_shadow()
             ema_loss, ema_acc, _, _ = validate_with_tta(model, val_loader, criterion, device)
             ema.restore(backup)
+            
             print(f"Epoch {epoch+1}/{num_epochs} | Train acc: {train_acc:.2f}% | Val acc: {val_acc:.2f}% | EMA Val: {ema_acc:.2f}%")
+            
+            # Save best model based on validation accuracy
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 patience_counter = 0
@@ -485,13 +565,15 @@ def main():
     except Exception as e:
         import traceback
         traceback.print_exc()
+    
     print("Training complete. Best val acc:", best_val_acc)
     
-
+    # Plot training curves
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     
-    # Plot Loss vs Epochs
     epochs_range = range(1, len(train_losses) + 1)
+    
+    # Loss plot
     ax1.plot(epochs_range, train_losses, 'b-', label='Train Loss')
     ax1.plot(epochs_range, val_losses, 'orange', label='Validation Loss')
     ax1.set_xlabel('Epochs')
@@ -500,7 +582,7 @@ def main():
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Plot Accuracy vs Epochs
+    # Accuracy plot
     ax2.plot(epochs_range, train_accuracies, 'b-', label='Train Accuracy')
     ax2.plot(epochs_range, val_accuracies, 'orange', label='Validation Accuracy')
     ax2.set_xlabel('Epochs')

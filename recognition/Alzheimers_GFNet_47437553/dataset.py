@@ -1,3 +1,18 @@
+"""
+ADNI Dataset Loader for Alzheimer's Disease Classification
+
+This module provides data loading utilities for the ADNI (Alzheimer's Disease Neuroimaging Initiative)
+dataset, including train/validation split, data augmentation, and balanced sampling.
+
+Classes:
+- ADNIDataset: PyTorch Dataset for loading brain scan images
+- Functions for building data pipelines with preprocessing and augmentation
+
+Usage:
+    from dataset import build_data_pipeline
+    data_loaders = build_data_pipeline(batch_size=32, val_fraction=0.2)
+"""
+
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import torchvision.transforms as transforms
@@ -10,34 +25,27 @@ from sklearn.model_selection import train_test_split
 
 
 class ADNIDataset(Dataset):
-    """
-    ADNI Dataset for JPEG brain scan images
-    """
+    """PyTorch Dataset for ADNI brain scan images (JPEG format).
+    Supports train/test modes with configurable augmentation and transforms."""
     
     def __init__(self, data_root='/home/groups/comp3710/ADNI/AD_NC', 
                  mode='train', transform=None, augment=True):
-        """
-        Args:
-            data_root: Path to ADNI dataset (contains train/ and test/ subdirs)
-            mode: 'train' or 'test'
-            transform: torchvision transforms
-            augment: Apply data augmentation
-        """
+        """Initialize ADNI dataset with specified mode and transformations.
+        Args: data_root: Path to dataset root, mode: 'train' or 'test', 
+        transform: Custom transforms, augment: Enable data augmentation"""
         self.data_root = Path(data_root)
         self.mode = mode
         self.augment = augment
         
-        # Collect all image paths and labels
         self.samples = []
         self.labels = []
         
-        # Class directories
+        # Class mapping: 0=Normal Cognitive, 1=Alzheimer's Disease
         class_dirs = {
-            'NC': 0,  # Cognitively Normal
-            'AD': 1   # Alzheimer's Disease
+            'NC': 0,
+            'AD': 1
         }
         
-        # Look in train/ or test/ subdirectory based on mode
         mode_path = self.data_root / mode
         
         if not mode_path.exists():
@@ -45,12 +53,12 @@ class ADNIDataset(Dataset):
         
         print(f"Loading data from: {mode_path}")
         
+        # Scan directories for images
         for class_name, label in class_dirs.items():
             class_path = mode_path / class_name
             if class_path.exists():
                 print(f"  Searching in {class_path}")
                 
-                # Look for JPEG files
                 jpg_files = list(class_path.glob('*.jpg')) + list(class_path.glob('*.jpeg'))
                 print(f"  Found {len(jpg_files)} images for class {class_name}")
                 
@@ -60,7 +68,7 @@ class ADNIDataset(Dataset):
             else:
                 print(f"  Warning: Class path does not exist: {class_path}")
         
-        # Convert to arrays with explicit dtype
+        # Convert to numpy arrays with explicit dtypes for consistency
         self.samples = np.array(self.samples, dtype=str)
         self.labels = np.array(self.labels, dtype=np.int64)
         
@@ -70,9 +78,10 @@ class ADNIDataset(Dataset):
         print(f"Found {len(self.samples)} total samples")
         print(f"Class distribution: CN={np.sum(self.labels==0)}, AD={np.sum(self.labels==1)}")
         
-        # Setup transforms
+        # Configure transforms based on mode and augmentation settings
         if transform is None:
             if mode == 'train' and augment:
+                # Training augmentation: rotation, flips, color jitter
                 self.transform = transforms.Compose([
                     transforms.Resize((224, 224)),
                     transforms.RandomRotation(15),
@@ -87,6 +96,7 @@ class ADNIDataset(Dataset):
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 ])
             else:
+                # Validation/test: only resize and normalize
                 self.transform = transforms.Compose([
                     transforms.Resize((224, 224)),
                     transforms.ToTensor(),
@@ -96,18 +106,18 @@ class ADNIDataset(Dataset):
             self.transform = transform
     
     def __len__(self):
+        """Return total number of samples in the dataset."""
         return len(self.samples)
     
     def __getitem__(self, idx):
-        # Load image
+        """Load and transform a single sample.
+        Returns: tuple of (image_tensor, label_tensor)"""
         image_path = self.samples[idx]
         image = Image.open(image_path).convert('RGB')
         
-        # Apply transforms
         if self.transform:
             image = self.transform(image)
         
-        # Get label as long tensor
         label = torch.tensor(self.labels[idx], dtype=torch.long)
         
         return image, label
@@ -116,21 +126,17 @@ class ADNIDataset(Dataset):
 def build_data_pipeline(batch_size=16, num_workers=4, 
                        val_fraction=0.2, augment=True, 
                        data_root='/home/groups/comp3710/ADNI/AD_NC') -> Dict[str, DataLoader]:
-    """
-    Build complete data pipeline with train/val split
-    
-    Returns:
-        Dictionary with 'train' and 'val' DataLoaders
-    """
+    """Build complete data pipeline with stratified train/val split and balanced sampling.
+    Returns dictionary containing 'train' and 'val' DataLoaders with appropriate preprocessing."""
     
     # Load full training dataset
     full_dataset = ADNIDataset(
         data_root=data_root,
         mode='train',
-        augment=False  # We'll handle augmentation separately
+        augment=False
     )
     
-    # Split into train and validation
+    # Stratified split to maintain class distribution
     indices = np.arange(len(full_dataset))
     labels = full_dataset.labels
     
@@ -145,35 +151,33 @@ def build_data_pipeline(batch_size=16, num_workers=4,
     print(f"  Training samples: {len(train_idx)}")
     print(f"  Validation samples: {len(val_idx)}")
     
-    # Create train transforms with augmentation
+    # Training transforms with comprehensive augmentation
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(224, scale=(0.75, 1.0), ratio=(0.9,1.1)),
+        transforms.RandomResizedCrop(224, scale=(0.75, 1.0), ratio=(0.9, 1.1)),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomRotation(10),
-        transforms.RandomApply([transforms.ColorJitter(0.15,0.15,0.1,0.03)], p=0.5),
+        transforms.RandomApply([transforms.ColorJitter(0.15, 0.15, 0.1, 0.03)], p=0.5),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],  # or your computed mean
-                            std=[0.229, 0.224, 0.225]),  # or your computed std
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         transforms.RandomErasing(p=0.25, scale=(0.02, 0.15), ratio=(0.3, 3.3))
     ])
     
-    # Create validation transforms (no augmentation)
+    # Validation transforms without augmentation
     val_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Create train dataset with augmentation
+    # Create dataset subsets with appropriate transforms
     train_dataset = ADNIDataset(
         data_root=data_root,
         mode='train',
         transform=train_transform,
-        augment=False  # Augmentation is in transform
+        augment=False
     )
     train_dataset = torch.utils.data.Subset(train_dataset, train_idx)
     
-    # Create validation dataset without augmentation
     val_dataset = ADNIDataset(
         data_root=data_root,
         mode='train',
@@ -182,7 +186,7 @@ def build_data_pipeline(batch_size=16, num_workers=4,
     )
     val_dataset = torch.utils.data.Subset(val_dataset, val_idx)
     
-    # Calculate sample weights for balanced training
+    # Calculate inverse frequency weights for balanced sampling
     train_labels = labels[train_idx]
     class_counts = np.bincount(train_labels)
     class_weights = 1.0 / class_counts
@@ -190,14 +194,14 @@ def build_data_pipeline(batch_size=16, num_workers=4,
     
     print(f"\nClass weights: CN={class_weights[0]:.3f}, AD={class_weights[1]:.3f}")
     
-    # Create weighted sampler for training
+    # Weighted sampler ensures balanced batches during training
     train_sampler = WeightedRandomSampler(
         weights=sample_weights,
         num_samples=len(train_idx),
         replacement=True
     )
     
-    # Create data loaders
+    # Create DataLoaders with optimized settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -223,9 +227,8 @@ def build_data_pipeline(batch_size=16, num_workers=4,
 
 def get_test_loader(batch_size=16, num_workers=4,
                    data_root='/home/groups/comp3710/ADNI/AD_NC') -> DataLoader:
-    """
-    Get test data loader
-    """
+    """Create DataLoader for test set without augmentation.
+    Returns: DataLoader for test dataset with standard preprocessing only."""
     test_dataset = ADNIDataset(
         data_root=data_root,
         mode='test',
@@ -244,12 +247,11 @@ def get_test_loader(batch_size=16, num_workers=4,
 
 
 if __name__ == '__main__':
-    # Test the data pipeline
+    """Test script to verify data pipeline functionality and data loading."""
     print("Testing ADNI data pipeline...")
     print("="*70)
     
     try:
-        # Test with train mode
         print("\n1. Testing train dataset loading...")
         data_loaders = build_data_pipeline(batch_size=4, num_workers=0)
         train_loader = data_loaders['train']
@@ -258,7 +260,7 @@ if __name__ == '__main__':
         print(f"\n✓ Train batches: {len(train_loader)}")
         print(f"✓ Val batches: {len(val_loader)}")
         
-        # Test loading a batch
+        # Verify batch loading and data format
         print("\n2. Testing batch loading...")
         for images, labels in train_loader:
             print(f"✓ Batch shape: {images.shape}")
@@ -268,7 +270,7 @@ if __name__ == '__main__':
                   f"Mean: {images.mean():.3f}, Std: {images.std():.3f}")
             break
         
-        # Test test loader
+        # Test test set loading
         print("\n3. Testing test dataset loading...")
         test_loader = get_test_loader(batch_size=4, num_workers=0)
         print(f"✓ Test batches: {len(test_loader)}")
