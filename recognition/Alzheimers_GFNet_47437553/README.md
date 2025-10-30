@@ -10,7 +10,7 @@ Alzheimer's disease is a progressive neurodegenerative disorder that affects mem
 
 ### How GFNet Works
 
-GFNet replaces the self-attention mechanism with Fourier-based global filtering. The architecture processes brain MRI scans through the following pipeline visualised by a digram from Rao et al. (2023).
+GFNet replaces the self-attention mechanism with Fourier-based global filtering. The architecture processes brain MRI scans through the following pipeline visualised in Figure 1 from Rao et al. (2023).
 
 ![GFNetDiagram](imgs/GFNetDiagram.png)
 *Figure 1 GFNet architecture overview and component breakdown (Rao et al. 2023)*
@@ -58,7 +58,6 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 pip install timm numpy scikit-learn matplotlib tqdm torch torchvision
 ```
 
@@ -93,7 +92,7 @@ The preprocessed dataset can be found on the `rangpur` cluster provided to stude
 
 ## Results Discussion
 
-The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves (Figure 2) show:
+The model achieves **80.2% test accuracy**, exceeding the required 80% threshold. The training curves in Figure 2 shows:
 
 - **Convergence**: Both training and validation losses decrease steadily over 50 epochs
 - **Generalization**: Validation accuracy closely tracks training accuracy, indicating good generalization without significant overfitting
@@ -102,15 +101,46 @@ The model achieves **80.2% test accuracy**, exceeding the required 80% threshold
 The higher validation accuracy suggests that the training set augmentations made the dataset harder to infer than the validation set itself. Both the Training loss and Validation loss converged towards a 0.40 value with minimal difference between the two indicating that there was minimal overfitting on the trianing set.
 
 ![Training Progress](imgs/TrainingGraphs.png)
-*Figure 2. Training and validation loss/accuracy curves showing model convergence over 50 epochs*
+*Figure 2. Training and validation loss/accuracy curves showing model convergence over 80 epochs*
 
 ## Prediction Results
 
-[ Insert prediction results here ]
+![PredictionResults](/imgs/prediction_results.png)
+*Figure 3. Prediction results after inference on test data*
 
-### Preprocessing Pipeline
+The visualization in Figure 3 presents a sample of predictions from the trained GFNet model on the ADNI test set. Out of 9 representative samples shown:
 
-The following techniques were used for data preprocessing:
+Performance Summary:
+```
+======================================================================
+TEST SET PERFORMANCE
+======================================================================
+Overall Accuracy: 0.8176 (81.76%)
+
+Classification Report:
+                          precision    recall  f1-score   support
+
+   Normal Cognitive (NC)     0.8692    0.7617    0.8119      2224
+Alzheimer's Disease (AD)     0.7749    0.8774    0.8230      2080
+
+                accuracy                         0.8176      4304
+               macro avg     0.8221    0.8195    0.8174      4304
+            weighted avg     0.8236    0.8176    0.8173      4304
+
+
+Confusion Matrix:
+                     Predicted NC    Predicted AD
+Actual NC                       1694             530
+Actual AD                        255            1825
+======================================================================
+```
+
+Key Observations:
+
+- High Confidence on AD Cases: The model demonstrates strong performance on Alzheimer's disease detection, with AD predictions showing notably higher confidence scores (70-95%) compared to normal cognition predictions (52-63%).
+- Conservative Bias: Both misclassifications are false positives (predicting AD when the patient is cognitively normal). While this results in over-diagnosis in these cases, from a clinical perspective, false positives may be preferable to false negatives, as they lead to further investigation rather than missed diagnoses.
+- Confidence Calibration: The lower confidence scores on NC predictions (52-63%) suggest the model may benefit from additional training data for normal cases or techniques to improve confidence calibration across both classes.
+- Visual Patterns: The correctly classified AD cases show visible structural changes typical of Alzheimer's disease, including ventricular enlargement and cortical atrophy, which the model appears to have learned to recognize effectively.
 
 ## Data Preprocessing
 
@@ -201,13 +231,19 @@ alzheimer_classification/
 ### Training the Model
 
 ```bash
-python train.py
+python3 train.py
 ```
 
 Or alternatively, if using the `rangpur` cluster
 
 ```bash
 sbatch slurm.txt
+```
+
+### Using the model
+Ensure that a `gf_net_best_model.pth` exists before attempting to use inference.
+```bash
+python3 predict.py
 ```
 
 ## Model Variants

@@ -558,7 +558,7 @@ def main():
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 patience_counter = 0
-                torch.save(model.state_dict(), 'enhanced_gfnet_best_model.pth')
+                torch.save(model.state_dict(), 'gfnet_best_model.pth')
 
     except KeyboardInterrupt:
         print("Interrupted")
