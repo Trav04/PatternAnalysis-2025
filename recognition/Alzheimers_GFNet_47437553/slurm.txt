@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --partition=a100
+#SBATCH --gres=gpu:1
+
+# set name of job
+#SBATCH --job-name=GFNet_A
+
+# total runtime, enable to use GPUs with max times
+#SBATCH --time=1-00:00:00 #1 days
+
+# mail alert at start, end and abortion of execution
+#SBATCH --mail-type=ALL
+
+# send mail to this address
+#SBATCH --mail-user=travis.graham@student.uq.edu.au
+
+# output file
+#SBATCH --output=GFNet.out
+source venv/bin/activate
+
+python3 train.py
