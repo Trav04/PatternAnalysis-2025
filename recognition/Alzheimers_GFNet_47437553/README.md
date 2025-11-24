@@ -105,7 +105,7 @@ The higher validation accuracy suggests that the training set augmentations made
 
 ## Prediction Results
 
-![PredictionResults](/imgs/prediction_results.png)
+![PredictionResults](imgs/prediction_results.png)
 *Figure 3. Prediction results after inference on test data*
 
 The visualization in Figure 3 presents a sample of predictions from the trained GFNet model on the ADNI test set. Out of 9 representative samples shown:
